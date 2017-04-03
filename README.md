@@ -4,7 +4,7 @@ checked is a safe integer library in C++17 providing overflow and truncation che
 If there is an overflow, `std::overflow_error` will be thrown.
 
 # When to use it
-* When you need overflow check in your code, and you don't want to place `if` statement everywhere.
+* When you need overflow check in your code, and you don't want to place `if` statements everywhere.
 * When you are dealing with libraries which do arithmetic operation, but do not support overflow check in their code.(But you want it.) e.g.: `chrono::duration`, `Eigen::Matrix`.
 
 # Usage
@@ -101,7 +101,7 @@ if (a != 0) //ok
 /* bool boo = a; */ //yields compile time error
 ```
 
-## `checked<bool>` can be used in if `statements` directly
+## `checked<bool>` can be used in `if` statements directly
 ```c++
 checked<bool> b = true;
 if (b) { /*ok*/ }
@@ -110,6 +110,11 @@ if (b) { /*ok*/ }
 ## Check the `noexcept`-ness
 When the operation will never cause overflow, such as bitwise operation, casting to a bigger type or implicit construction. The operation is `noexcept`
 
+# Details
+## Object Model
+* All `checked<T>` is guaranteed to be POD type, which means `sizeof(T) == sizeof(checked<T>)`, and you can manipulate its binary representation via `reinterpret_cast` or whatever something.
+* Default construction, copy/move construction/assignment between two object with same type is trivial and `noexcept`.
+
 # Note
 * Since C++14, 1 << 31 is specially allowed, whichs yields INT_MIN, but in this library, it will cause an overflow excption.
 * Left hand side operation are not checked, for example:
@@ -117,3 +122,4 @@ When the operation will never cause overflow, such as bitwise operation, casting
   1 + 1 + 3 + checked<int>{3};
 //^^^^^^^^^
 //This part of the operation is not checked if they overflows.
+```
