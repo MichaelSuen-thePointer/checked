@@ -62,4 +62,7 @@ int main()
     if (bo)
     { /*ok*/
     }
+
+    checked<unsigned> ii = 255;
+    auto jj = checked_cast<int>(ii);
 }

@@ -607,11 +607,11 @@ std::ostream& operator<<(std::ostream& os, checked<T> t)
     return os << t.get();
 }
 
-template <class T, class U, MQ_REQUIRES(!std::is_same_v<T, U> && std::is_integral_v<U> && detail::all_bool_or_all_not_v<T, U>)>
+template <class T, class U, MQ_REQUIRES(!std::is_same_v<T, U> && std::is_integral_v<T> && !detail::is_no_overflow_convertible_v<U, T> && detail::all_bool_or_all_not_v<T, U>)>
 auto checked_cast(checked<U> u)
 MAKE_RETURN((checked<T>{static_cast<U>(u)}))
 
-template <class T, class U, MQ_REQUIRES(!(detail::is_no_overflow_convertible_v<T, U> && detail::all_bool_or_all_not_v<T, U>))>
+template <class T, class U, MQ_REQUIRES(detail::is_no_overflow_convertible_v<U, T> && detail::all_bool_or_all_not_v<T, U>)>
 checked<T> checked_cast(checked<U>)
 {
     static_assert(detail::always_false<T>::value, "please use implicit cast for conversion with no overflow");
