@@ -15,7 +15,13 @@ int main()
     auto d = a + 1;
 
     auto e = 1 + a;
-    auto f = 1u - a;
+    try
+    {   
+        auto f = 1u - a;
+    } catch(std::overflow_error&)
+    {
+        
+    }
     auto g = 1ll * a;
     auto h = 1ull / a;
 

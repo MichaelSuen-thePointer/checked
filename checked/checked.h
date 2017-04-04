@@ -332,7 +332,7 @@ struct is_no_overflow_convertible
 template <class T, class U>
 constexpr bool is_no_overflow_convertible_v = is_no_overflow_convertible<T, U>::value;
 
-#define MAKE_RETURN_(expr) noexcept(noexcept(expr)) -> decltype(expr) { return expr; }
+#define MAKE_RETURN_(...) noexcept(noexcept(__VA_ARGS__)) -> decltype(__VA_ARGS__) { return __VA_ARGS__; }
 
 #define MAKE_RETURN(expr) MAKE_RETURN_ expr
 
@@ -529,7 +529,7 @@ auto operator+=(checked<T>& t, U u)
 MAKE_RETURN((t = t + u))
 
 //the macro simply generates the code above
-#define MAKE_ARITH_OPERATOR(OP, FUNC)                                                           \
+#define MAKE_ARITH_OPERATOR(OP, EQOP, FUNC)                                                     \
 template <class T, class U, MQ_REQUIRES(std::is_integral_v<T> && std::is_integral_v<U>)>        \
 auto operator OP(checked<T> t, checked<U> u)                                                    \
 MAKE_RETURN((make_checked(detail::arith<T, U>::FUNC(static_cast<T>(t), static_cast<U>(u)))))    \
@@ -543,22 +543,22 @@ auto operator OP(checked<T> t, U u)                                             
 MAKE_RETURN((make_checked(detail::arith<T, U>::FUNC(static_cast<T>(t), u))))                    \
                                                                                                 \
 template <class T, class U, MQ_REQUIRES(std::is_integral_v<T> && std::is_integral_v<U>)>        \
-auto operator OP=(checked<T>& t, checked<U> u)                                                  \
+auto operator EQOP(checked<T>& t, checked<U> u)                                                  \
 MAKE_RETURN((t = t OP u))                                                                       \
                                                                                                 \
 template <class T, class U, MQ_REQUIRES(std::is_integral_v<T> && std::is_integral_v<U>)>        \
-auto operator OP=(checked<T>& t, U u)                                                           \
+auto operator EQOP(checked<T>& t, U u)                                                           \
 MAKE_RETURN((t = t OP u))
 
-MAKE_ARITH_OPERATOR(-, sub)
-MAKE_ARITH_OPERATOR(*, mul)
-MAKE_ARITH_OPERATOR(/ , div)
-MAKE_ARITH_OPERATOR(%, mod)
-MAKE_ARITH_OPERATOR(<< , shl)
-MAKE_ARITH_OPERATOR(>> , shr)
-MAKE_ARITH_OPERATOR(^, bit_xor)
-MAKE_ARITH_OPERATOR(&, bit_and)
-MAKE_ARITH_OPERATOR(| , bit_or)
+MAKE_ARITH_OPERATOR(-, -=, sub)
+MAKE_ARITH_OPERATOR(*, *=, mul)
+MAKE_ARITH_OPERATOR(/, /=, div)
+MAKE_ARITH_OPERATOR(%,%=, mod)
+MAKE_ARITH_OPERATOR(<< ,<<=, shl)
+MAKE_ARITH_OPERATOR(>> ,>>=, shr)
+MAKE_ARITH_OPERATOR(^,^=, bit_xor)
+MAKE_ARITH_OPERATOR(&,&=, bit_and)
+MAKE_ARITH_OPERATOR(| ,|=, bit_or)
 
 #undef MAKE_ARITH_OPERATOR
 
