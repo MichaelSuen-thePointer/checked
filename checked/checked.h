@@ -49,6 +49,15 @@ struct always_false
 template<class T>
 constexpr bool false_v = always_false<T>::value;
 
+template<class T, class U>
+struct smaller_than
+    : std::bool_constant<!std::is_same_v<T, U> && std::is_same_v<std::common_type_t<T, U>, U>>
+{
+};
+
+template<class T, class U>
+constexpr bool smaller_than_v = smaller_than<T, U>::value;
+
 template <class T, class Signness = signness_t<T>>
 struct arith_impl;
 
@@ -143,6 +152,24 @@ struct arith_impl<T, unsigned_type>
         return l ^ r;
     }
 
+    static T increment(T l)
+    {
+        if (l == max)
+        {
+            overflow();
+        }
+        return ++l;
+    }
+
+    static T decrement(T l)
+    {
+        if (l == min)
+        {
+            overflow();
+        }
+        return --l;
+    }
+
     template <class U>
     static U cast_to(T r, unsigned_type) noexcept(sizeof(U) >= sizeof(T))
     { //目标如果比源的bit数多，则绝不会抛异常
@@ -225,12 +252,29 @@ struct arith_impl<T, signed_type>
 
     static T multiply(T l, T r)
     {
-        if ((l > 0 && r > 0 && max / l < r) || (l < 0 && r < 0 && max / r < l) ||
-            (l > 0 && r < 0 && min / l > r) || (l < 0 && r > 0 && min / r > l))
+        if (l == 0 || r == 0)
+        {
+            return 0;
+        }
+        if (l == 1 || r == 1)
+        {
+            return l ^ r ^ 1;
+        }
+        if (l == min || r == min)
         {
             overflow();
         }
-        return l * r;
+        if (l == -1 || r == -1)
+        {
+            return -(l ^ r ^ -1);
+        }
+        const auto slhs = r >= 0 ? l : -l;
+        const auto arhs = r < 0 ? -r : r;
+        if (slhs >= 0 ? slhs > max / arhs : slhs < min / arhs)
+        {
+            overflow();
+        }
+        return slhs * arhs;
     }
 
     static T divide(T l, T r)
@@ -305,6 +349,24 @@ struct arith_impl<T, signed_type>
         return 0;
     }
 
+    static T increment(T l)
+    {
+        if (l == max)
+        {
+            overflow();
+        }
+        return ++l; //must use ++, for + may promote the type
+    }
+
+    static T decrement(T l)
+    {
+        if (l == min)
+        {
+            overflow();
+        }
+        return --l;
+    }
+
     [[noreturn]]
     static void overflow()
     {
@@ -323,9 +385,7 @@ constexpr bool is_noexcept_convertible_v = is_noexcept_convertible<T, U>::value;
 
 template <class T, class U>
 struct is_no_overflow_convertible
-    : std::conditional_t<std::is_integral_v<T> && std::is_integral_v<U>,
-    is_noexcept_convertible<T, U>,
-    std::false_type>
+    : std::conjunction<std::is_integral<T>, std::is_integral<U>, is_noexcept_convertible<T, U>>
 {
 };
 
@@ -345,19 +405,26 @@ struct arith
     static auto cast(T t)
         MAKE_RETURN((arith_impl<promoted_type_t<T>>::template cast_to<U>(t)))
 
-        static_assert(std::is_same<decltype(cast(T())), U>::value, "for debug, this cannot happen");
+        //static_assert(std::is_same<decltype(cast(T())), U>::value, "for debug, this cannot happen");
 
-    using result_type = std::common_type_t<T, U>;
+        using result_type = std::common_type_t<T, U>;
     using inverse_type = promoted_type_t<T>;
 
     using op = arith_impl<result_type>;
     using invop = arith_impl<inverse_type>;
+    using incdecop = arith_impl<T>;
     using shiftop = arith_impl<promoted_type_t<T>>;
 
     using arithT = arith<T, result_type>;
     using arithU = arith<U, result_type>;
 
-    static auto add(T l, U r)
+    static auto inc(T l)
+        MAKE_RETURN((incdecop::increment(l)))
+
+        static auto dec(T l)
+        MAKE_RETURN((incdecop::decrement(l)))
+
+        static auto add(T l, U r)
         MAKE_RETURN((op::plus(arithT::cast(l), arithU::cast(r))))
 
         static auto sub(T l, U r)
@@ -394,19 +461,19 @@ struct arith
         MAKE_RETURN((arithT::cast(l) == arithU::cast(r)))
 
         static auto ne(T l, U r)
-        MAKE_RETURN((!eq(l, r)))
+        MAKE_RETURN((arithT::cast(l) != arithU::cast(r)))
 
         static auto gt(T l, U r)
         MAKE_RETURN((arithT::cast(l) > arithU::cast(r)))
 
         static auto le(T l, U r)
-        MAKE_RETURN((!gt(l, r)))
+        MAKE_RETURN((arithT::cast(l) <= arithU::cast(r)))
 
         static auto lt(T l, U r)
         MAKE_RETURN((arithT::cast(l) < arithU::cast(r)))
 
         static auto ge(T l, U r)
-        MAKE_RETURN((!lt(l, r)))
+        MAKE_RETURN((arithT::cast(l) >= arithU::cast(r)))
 };
 
 //return whether T and U are both `bool` or both not
@@ -438,44 +505,39 @@ public:
     checked& operator=(const checked&) noexcept = default;
     checked& operator=(checked&&) noexcept = default;
 
-    constexpr checked(T v) noexcept
-        : _val(v)
-    {
-    }
-
     template <class U, MQ_REQUIRES(std::is_integral_v<U> && detail::is_no_overflow_convertible_v<U, T>)>
     checked(U u) noexcept
         : _val(u)
     {
     }
 
-    template <class U, MQ_REQUIRES(!detail::is_no_overflow_convertible_v<U, T>)>
-    explicit checked(U u) noexcept(detail::is_noexcept_convertible_v<U, T>)
+    template <class U, MQ_REQUIRES(std::is_integral_v<U> && !detail::is_no_overflow_convertible_v<U, T>)>
+    explicit checked(U u) noexcept(detail::is_no_overflow_convertible_v<U, T>)
         : _val(detail::arith<U, T>::cast(u))
     {
     }
 
-    template <class U, MQ_REQUIRES(!std::is_same_v<T, U> && detail::is_no_overflow_convertible_v<U, T>)>
-    checked(checked<U> u) noexcept
+    template <class U, MQ_REQUIRES((detail::smaller_than_v<U, T> || std::is_same_v<T, U>) && detail::is_no_overflow_convertible_v<U, T>)>
+    checked(checked<U> u) noexcept //只允许小的U向大的T转换
         : _val(static_cast<T>(u))
     {
     }
 
-    template <class U, MQ_REQUIRES(!detail::is_no_overflow_convertible_v<U, T>)>
-    explicit checked(checked<U> u) noexcept(detail::is_noexcept_convertible_v<U, T>)
-        : checked(u.template cast_to<T>()) //redirect to the ctor above
+    template <class U, MQ_REQUIRES(!std::is_same_v<T, U> && (!detail::smaller_than_v<U, T> || !detail::is_no_overflow_convertible_v<U, T>))>
+    explicit checked(checked<U> u) noexcept(detail::is_no_overflow_convertible_v<U, T>)
+        : checked(u.template cast_to<T>()) //T != U && T <= U || U -overflow-> T
     {
     }
 
     template <class U, MQ_REQUIRES(std::is_integral_v<U>)>
-    checked& operator=(U u) noexcept(detail::is_noexcept_convertible_v<U, T>)
+    checked& operator=(U u) noexcept(detail::is_no_overflow_convertible_v<U, T>)
     {
         _val = detail::arith<U, T>::cast(u);
         return *this;
     }
 
     template <class U, MQ_REQUIRES(std::is_integral_v<U>)>
-    checked& operator=(checked<U> u) noexcept(detail::is_noexcept_convertible_v<U, T>)
+    checked& operator=(checked<U> u) noexcept(detail::is_no_overflow_convertible_v<U, T>)
     {
         _val = u.template cast_to<T>();
         return *this;
@@ -487,14 +549,14 @@ public:
         return _val;
     }
 
-    template <class U, MQ_REQUIRES(!std::is_same_v<T, U> && std::is_integral_v<U> && detail::all_bool_or_all_not_v<T, U>)>
-    explicit operator U() const noexcept(detail::is_noexcept_convertible_v<U, T>)
+    template <class U, MQ_REQUIRES(!std::is_same_v<T, U> && !detail::is_no_overflow_convertible_v<T, U> && detail::all_bool_or_all_not_v<T, U>)>
+    explicit operator U() const noexcept(detail::is_no_overflow_convertible_v<U, T>)
     {
-        static_assert(detail::always_false<U>::value, "please use `static_check_cast` for protentially overflow cast");
+        static_assert(detail::always_false<U>::value, "please use `checked_cast` for protentially overflow cast");
         return 0;
     }
 
-    template <class U, class Ty = T, MQ_REQUIRES(std::is_same_v<U, bool> && !std::is_same_v<Ty, bool>)>
+    template <class U, MQ_REQUIRES(std::is_same_v<U, bool> && !std::is_same_v<T, bool>)>
     explicit operator U() const
     {
         static_assert(detail::always_false<U>::value, "non-bool types cannot be convert to bool, please use `operator==`");
@@ -502,10 +564,47 @@ public:
     }
 
     template <class U>
-    checked<U> cast_to() const noexcept(detail::is_noexcept_convertible_v<U, T>)
+    checked<U> cast_to() const noexcept(detail::is_no_overflow_convertible_v<U, T>)
     {
         return checked<U>{detail::arith<T, U>::cast(_val)};
     }
+
+    auto operator+() const
+        MAKE_RETURN((make_checked(+_val)))
+
+        auto operator-() const
+        MAKE_RETURN((make_checked(detail::arith<T, T>::sub(0, _val))))
+
+        //template<class Ty = T, std::enable_if_t<!std::is_same_v<Ty, bool>>>
+        checked& operator++() noexcept(false)
+    {
+        _val = detail::arith<T, T>::inc(_val);
+        return *this;
+    }
+
+    //template<class Ty = T, std::enable_if_t<!std::is_same_v<Ty, bool>>>
+    checked& operator--() noexcept(false)
+    {
+        _val = detail::arith<T, T>::dec(_val);
+        return *this;
+    }
+
+    //template<class Ty = T, std::enable_if_t<!std::is_same_v<Ty, bool>>>
+    checked operator++(int) noexcept(false)
+    {
+        auto tmp = *this;
+        ++(*this);
+        return tmp;
+    }
+
+    //template<class Ty = T, std::enable_if_t<!std::is_same_v<Ty, bool>>>
+    checked operator--(int) noexcept(false)
+    {
+        auto tmp = *this;
+        --(*this);
+        return tmp;
+    }
+
 };
 
 template <class T, class U, MQ_REQUIRES(std::is_integral_v<T> && std::is_integral_v<U>)>
@@ -543,22 +642,22 @@ auto operator OP(checked<T> t, U u)                                             
 MAKE_RETURN((make_checked(detail::arith<T, U>::FUNC(static_cast<T>(t), u))))                    \
                                                                                                 \
 template <class T, class U, MQ_REQUIRES(std::is_integral_v<T> && std::is_integral_v<U>)>        \
-auto operator EQOP(checked<T>& t, checked<U> u)                                                  \
+auto operator EQOP(checked<T>& t, checked<U> u)                                                 \
 MAKE_RETURN((t = t OP u))                                                                       \
                                                                                                 \
 template <class T, class U, MQ_REQUIRES(std::is_integral_v<T> && std::is_integral_v<U>)>        \
-auto operator EQOP(checked<T>& t, U u)                                                           \
+auto operator EQOP(checked<T>& t, U u)                                                          \
 MAKE_RETURN((t = t OP u))
 
 MAKE_ARITH_OPERATOR(-, -=, sub)
 MAKE_ARITH_OPERATOR(*, *=, mul)
-MAKE_ARITH_OPERATOR(/, /=, div)
-MAKE_ARITH_OPERATOR(%,%=, mod)
-MAKE_ARITH_OPERATOR(<< ,<<=, shl)
-MAKE_ARITH_OPERATOR(>> ,>>=, shr)
-MAKE_ARITH_OPERATOR(^,^=, bit_xor)
-MAKE_ARITH_OPERATOR(&,&=, bit_and)
-MAKE_ARITH_OPERATOR(| ,|=, bit_or)
+MAKE_ARITH_OPERATOR(/ , /=, div)
+MAKE_ARITH_OPERATOR(%, %=, mod)
+MAKE_ARITH_OPERATOR(<< , <<=, shl)
+MAKE_ARITH_OPERATOR(>> , >>=, shr)
+MAKE_ARITH_OPERATOR(^, ^=, bit_xor)
+MAKE_ARITH_OPERATOR(&, &=, bit_and)
+MAKE_ARITH_OPERATOR(| , |=, bit_or)
 
 #undef MAKE_ARITH_OPERATOR
 
